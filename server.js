@@ -13,6 +13,20 @@ const sanitizeFilename = (str) => {
   return str.replace(/[^\w\s.-]/gi, '').replace(/\s+/g, '_');
 };
 
+// Rate limiting middleware
+let lastRequestTime = 0;
+app.use('/download', (req, res, next) => {
+  const now = Date.now();
+  if (now - lastRequestTime < 5000) { // 5 second cooldown
+    return res.status(429).json({ 
+      error: 'Please wait 5 seconds between downloads',
+      retryAfter: 5 - Math.floor((now - lastRequestTime)/1000)
+    });
+  }
+  lastRequestTime = now;
+  next();
+});
+
 // Route to handle video downloads
 app.get('/download', async (req, res) => {
   try {
@@ -23,16 +37,26 @@ app.get('/download', async (req, res) => {
     }
 
     // Enhanced URL validation
-    if (!/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/.test(url)) {
+    const videoId = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|youtu\.be\/)([^"&?\/\s]{11})/)?.[1];
+    if (!videoId) {
       return res.status(400).json({ error: 'Invalid YouTube URL format' });
     }
 
-    // First try to get video info
-    exec(`yt-dlp --dump-json ${url}`, (error, stdout, stderr) => {
+    // Custom yt-dlp command with headers and retries
+    const ytdlCommand = `yt-dlp \
+      --force-ipv4 \
+      --socket-timeout 30 \
+      --retries 3 \
+      --throttled-rate 100K \
+      --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
+      --referer "https://www.youtube.com/" \
+      --dump-json ${url}`;
+
+    exec(ytdlCommand, (error, stdout, stderr) => {
       if (error) {
         console.error('YT-DLP Error:', stderr);
         return res.status(500).json({ 
-          error: 'Failed to get video info',
+          error: 'YouTube is temporarily blocking requests. Please try again later.',
           details: stderr.toString()
         });
       }
@@ -46,18 +70,18 @@ app.get('/download', async (req, res) => {
         res.header('Content-Disposition', `attachment; filename="${filename}"`);
         res.header('Content-Type', 'video/mp4');
 
-        // Now download the video
-        const ytdlProcess = exec(`yt-dlp -o - -f best ${url}`);
+        // Download command with optimized parameters
+        const downloadCommand = `yt-dlp \
+          -o - \
+          -f 'best[height<=720]' \
+          --no-cache-dir \
+          --throttled-rate 100K \
+          ${url}`;
+
+        const ytdlProcess = exec(downloadCommand);
         
         ytdlProcess.stdout.pipe(res);
         ytdlProcess.stderr.on('data', (data) => console.error('Download error:', data.toString()));
-
-        // Handle process exit
-        ytdlProcess.on('exit', (code) => {
-          if (code !== 0) {
-            console.error(`yt-dlp process exited with code ${code}`);
-          }
-        });
 
       } catch (parseError) {
         console.error('Parse Error:', parseError);
@@ -71,23 +95,10 @@ app.get('/download', async (req, res) => {
   }
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
-});
-
-// Start server with timeout configuration
+// Start server
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Access the application at http://localhost:${PORT}`);
 });
 
-// Set timeout to 10 minutes (600000ms)
-server.timeout = 600000;
-
-// Handle server errors
-server.on('error', (error) => {
-  console.error('Server error:', error);
-});
+server.timeout = 600000; // 10 minute timeout
