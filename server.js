@@ -52,6 +52,13 @@ app.get('/download', async (req, res) => {
         ytdlProcess.stdout.pipe(res);
         ytdlProcess.stderr.on('data', (data) => console.error('Download error:', data.toString()));
 
+        // Handle process exit
+        ytdlProcess.on('exit', (code) => {
+          if (code !== 0) {
+            console.error(`yt-dlp process exited with code ${code}`);
+          }
+        });
+
       } catch (parseError) {
         console.error('Parse Error:', parseError);
         res.status(500).json({ error: 'Failed to process video information' });
@@ -70,11 +77,17 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// Start server
+// Start server with timeout configuration
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Access the application at http://localhost:${PORT}`);
 });
-// Increase timeout to 10 minutes
+
+// Set timeout to 10 minutes (600000ms)
 server.timeout = 600000;
+
+// Handle server errors
+server.on('error', (error) => {
+  console.error('Server error:', error);
+});
