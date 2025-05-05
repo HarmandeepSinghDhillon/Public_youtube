@@ -36,11 +36,15 @@ app.get('/download', async (req, res) => {
       return res.status(400).json({ error: 'YouTube URL is required' });
     }
 
-    // Enhanced URL validation
-    const videoId = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|youtu\.be\/)([^"&?\/\s]{11})/)?.[1];
-    if (!videoId) {
+    // Simplified and properly escaped YouTube URL validation
+    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/(watch\?v=|embed\/|v\/|shorts\/)?([a-zA-Z0-9_-]{11})/;
+    const match = url.match(youtubeRegex);
+    
+    if (!match) {
       return res.status(400).json({ error: 'Invalid YouTube URL format' });
     }
+    
+    const videoId = match[5];
 
     // Custom yt-dlp command with headers and retries
     const ytdlCommand = `yt-dlp \
