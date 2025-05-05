@@ -1,1 +1,2 @@
-yt-dlp
+yt-dlp>=2023.11.16
+ffmpeg-python

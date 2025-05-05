@@ -18,54 +18,48 @@ app.get('/download', async (req, res) => {
   try {
     const url = req.query.url;
     
-    // Validate URL
     if (!url) {
       return res.status(400).json({ error: 'YouTube URL is required' });
     }
 
-    // Basic YouTube URL validation
-    if (!url.includes('youtube.com/watch') && !url.includes('youtu.be/')) {
-      return res.status(400).json({ error: 'Invalid YouTube URL' });
+    // Enhanced URL validation
+    if (!/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/.test(url)) {
+      return res.status(400).json({ error: 'Invalid YouTube URL format' });
     }
 
-    // Get video info first to set proper filename
-    exec(`yt-dlp --get-title --get-filename ${url}`, (titleError, titleStdout, titleStderr) => {
-      if (titleError) {
-        console.error('Error getting video info:', titleStderr);
-        return res.status(500).json({ error: 'Could not retrieve video information' });
+    // First try to get video info
+    exec(`yt-dlp --dump-json ${url}`, (error, stdout, stderr) => {
+      if (error) {
+        console.error('YT-DLP Error:', stderr);
+        return res.status(500).json({ 
+          error: 'Failed to get video info',
+          details: stderr.toString()
+        });
       }
 
-      const [videoTitle, originalFilename] = titleStdout.split('\n').filter(Boolean);
-      const cleanTitle = videoTitle ? sanitizeFilename(videoTitle) : 'video';
-      const filename = `${cleanTitle}.mp4`;
+      try {
+        const info = JSON.parse(stdout);
+        const cleanTitle = sanitizeFilename(info.title || 'video');
+        const filename = `${cleanTitle}.mp4`;
 
-      // Set headers before piping the response
-      res.header('Content-Disposition', `attachment; filename="${filename}"`);
-      res.header('Content-Type', 'video/mp4');
+        // Set headers
+        res.header('Content-Disposition', `attachment; filename="${filename}"`);
+        res.header('Content-Type', 'video/mp4');
 
-      // Download and stream the video
-      const ytdlProcess = exec(`yt-dlp -o - -f best ${url}`, (error, stdout, stderr) => {
-        if (error) {
-          console.error('Download error:', stderr);
-          if (!res.headersSent) {
-            return res.status(500).json({ error: 'Error downloading video' });
-          }
-        }
-      });
+        // Now download the video
+        const ytdlProcess = exec(`yt-dlp -o - -f best ${url}`);
+        
+        ytdlProcess.stdout.pipe(res);
+        ytdlProcess.stderr.on('data', (data) => console.error('Download error:', data.toString()));
 
-      // Handle process exit
-      ytdlProcess.on('exit', (code) => {
-        if (code !== 0) {
-          console.error(`yt-dlp process exited with code ${code}`);
-        }
-      });
-
-      // Pipe the video data to the response
-      ytdlProcess.stdout.pipe(res);
+      } catch (parseError) {
+        console.error('Parse Error:', parseError);
+        res.status(500).json({ error: 'Failed to process video information' });
+      }
     });
 
   } catch (error) {
-    console.error('Unexpected error:', error);
+    console.error('Server Error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -82,3 +76,5 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Access the application at http://localhost:${PORT}`);
 });
+// Increase timeout to 10 minutes
+server.timeout = 600000;
